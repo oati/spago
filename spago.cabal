@@ -134,7 +134,7 @@ library
     , file-embed
     , filepath
     , foldl
-    , fsnotify
+    , fsnotify <0.4.0.0
     , generic-lens
     , http-client
     , http-conduit
