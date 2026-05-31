@@ -11,10 +11,28 @@ export const connectImpl = (databasePath, logger) => {
 
   const db = new DatabaseSync(databasePath, {
     enableForeignKeyConstraints: true,
-    timeout: 5000, // Wait up to 5s if database is locked (matches better-sqlite3 default)
+    timeout: 5000, // Wait up to 5s if database is locked
   });
 
-  db.exec("PRAGMA journal_mode = WAL");
+  // WAL journal mode is persistent in the DB file header (bytes 18-19), so
+  // once set it sticks across connections and reopens. We skip the PRAGMA when
+  // it's already set to avoid hitting winTruncate on the wal-index (.shm),
+  // which races between concurrent spago processes on Windows and surfaces as
+  // SQLITE_IOERR_TRUNCATE (errcode 1546).
+  //
+  // When two fresh processes race the initial set, the loser's exec throws,
+  // but the winner has already written WAL to the header — so we only re-throw
+  // if WAL didn't actually end up enabled (i.e. the error wasn't the benign
+  // race we expect).
+  //
+  // See:
+  //   https://sqlite.org/pragma.html (journal_mode persistence)
+  //   https://sqlite.org/fileformat.html (header bytes 18-19 = WAL marker)
+  const inWal = () => db.prepare("PRAGMA journal_mode").get()?.journal_mode === "wal";
+  if (!inWal()) {
+    try { db.exec("PRAGMA journal_mode = WAL"); }
+    catch (e) { if (!inWal()) throw e; }
+  }
 
   db.prepare(`CREATE TABLE IF NOT EXISTS package_sets
     ( version TEXT PRIMARY KEY NOT NULL
